@@ -30,23 +30,13 @@ library(shinythemes)
 library(cluster)
 
 
-# Define the two paths
-paths <- c("TrackmanData/Spring24/Clean", "TrackmanData/Fall24/Clean")
+#CCBData <- fs::dir_ls("OneDrive_1_6-5-2023/TrackmanData/Spring23/Games") %>%
 
-# Collect the file paths from both directories first
-file_paths <- map(paths, fs::dir_ls) %>% 
-  unlist()  # Unlist the results to have a single vector of file paths
+CCBData <- fs::dir_ls("TrackmanData/Spring24/Clean") %>%
+  map_df(read_csv)
 
-# Read and combine CSV files
-CCBData <- map_df(file_paths, read_csv)
-
-# Convert to data.table
 CCBData <- data.table(CCBData)
-
-# Add Counter_1 column grouped by Date and Pitcher
-CCBData <- CCBData[ , Counter_1 := 1:.N, by = c("Date", "Pitcher") ]
-
-
+CCBData<- CCBData[ , Counter_1 := 1:.N , by = c("Date","Pitcher") ]
 
 
 CCBData <- CCBData %>%
