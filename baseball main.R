@@ -1,4 +1,3 @@
-
 # This application was built by Robbie Harper and Kevin Sivakumar and was further developed by Davis Jones
 
 # Last update: February 12
@@ -28,14 +27,23 @@ library(baseballr)
 library(ggforce)
 library(shinythemes)
 library(cluster)
+library(bslib)
+library(tools)
 
 
-#CCBData <- fs::dir_ls("OneDrive_1_6-5-2023/TrackmanData/Spring23/Games") %>%
+# Define the two paths
+paths <- c("TrackmanData/Spring24/Clean", "TrackmanData/Fall24/Clean")
 
-CCBData <- fs::dir_ls("TrackmanData/Spring24/Clean") %>%
-  map_df(read_csv)
+# Collect the file paths from both directories first
+file_paths <- map(paths, fs::dir_ls) %>% 
+  unlist()  # Unlist the results to have a single vector of file paths
 
+# Read and combine CSV files
+CCBData <- map_df(file_paths, read_csv)
+
+# Convert to data.table
 CCBData <- data.table(CCBData)
+
 CCBData<- CCBData[ , Counter_1 := 1:.N , by = c("Date","Pitcher") ]
 
 
@@ -45,11 +53,12 @@ CCBData <- CCBData %>%
          game_date = as.Date(date_str, format = "%Y%m%d"),
          formatted_date = format(game_date, "%m-%d-%y"),                  #This code creates a game variable for game input dropdown 
          
-         GameNumber = sub("^\\d{8}-\\w+-(\\d+)$", "\\1", GameID),         #It also sorts the games chronologically and puts them in a format shown below 
-         Games = paste(AwayTeam, "vs", HomeTeam, "on", formatted_date, ", Game", GameNumber)) %>%
+         GameNumber = as.double(sub("^\\d{8}-\\w+-(?:\\w+-)?(\\d+)$", "\\1", GameID)),         #It also sorts the games chronologically and puts them in a format shown below 
+         Games = paste(AwayTeam, "vs", HomeTeam, "on", formatted_date, ", Game", as.double(GameNumber))) %>%
   ungroup() %>%
   arrange(game_date)
-
+# 20240504-GaryWright-1  :spring
+# 20240921-GaryWright-Private-1    : fall
 CCBData <- CCBData %>% filter(!is.na(TaggedPitchType) & TaggedPitchType != "Undefined") #Removes all undefined columns in the TaggedPitchType data 
 
 
@@ -92,7 +101,8 @@ image_width <- 45
 
 ui = {navbarPage(
   img(src = "CentreCTransparent.png", alt = "Cannot find image", width = image_width, height = image_width*image_ratio), 
-  theme = shinytheme("sandstone"),
+
+  theme = shinytheme("flatly"),
   tabPanel("Pitcher Charts",
            sidebarLayout(
              sidebarPanel(width = 3,
@@ -107,7 +117,7 @@ ui = {navbarPage(
                             column(6, offset = 0, align = "center",
                                    pickerInput(
                                      inputId = "PitcherTeamInput", label = "Select Team",
-                                     choices = c(sort(unique(CCBData$PitcherTeam))), selected = "CEN_COL",
+                                     choices = NULL, selected = NULL,
                                      options = list(`actions-box` = T), multiple = T
                                    ))
                           ),
@@ -193,10 +203,10 @@ ui = {navbarPage(
                                      tabPanel("Spray Chart 2",
                                               fluidRow(column(10,offset = 0, align = "center",
                                                               h3("Spray Chart 2"), hr(style="border-color: black;"),
-                                                              plotlyOutput("SprayChartPlot2",height = 530,width = 770 )),
+                                                              plotlyOutput("SprayChartPlot2",height = 530,width = 720 )),
                                                        column(2, offset = 0, align = "right",
                                                               h3("Strike Zone"), hr(style="border-color: black;"),
-                                                              plotOutput("PitchKzone",height = 400, width = 270))
+                                                              plotOutput("PitchKzone",height = 400, width = 230))
                                               ),
                                               fluidRow(
                                                 column(4, offset = 0.5,
@@ -270,11 +280,22 @@ ui = {navbarPage(
   tabPanel("Batter Charts",
            sidebarLayout(
              sidebarPanel(width = 3,
-                          pickerInput(
-                            inputId = "BatterTeamInput", label = "Select Team",
-                            choices = c(sort(unique(CCBData$BatterTeam))), selected = "CEN_COL",
-                            options = list(`actions-box` = T), multiple = T
+                          fluidRow(
+                            column(6, offset = 0, align = "center",
+                                   pickerInput(
+                                     inputId = "BatterSeasonInput", label = "Select Season",
+                                     choices = c(sort(unique(CCBData$season))), selected = "spring24",
+                                     options = list(`actions-box` = T), multiple = T
+                                   )),
+                            # The choices for these inputs are created within the server
+                            column(6, offset = 0, align = "center",
+                                   pickerInput(
+                                     inputId = "BatterTeamInput", label = "Select Team",
+                                     choices = NULL, selected = NULL,
+                                     options = list(`actions-box` = T), multiple = T
+                                   ))
                           ),
+                          
                           selectizeInput(
                             inputId = "BatterInput", label = "Select Batter",
                             choices = NULL, selected = NULL
@@ -360,6 +381,11 @@ ui = {navbarPage(
              sidebarPanel(width = 3,
                           h3("Select Info"),
                           pickerInput(
+                            inputId = "UmpireSeasonInput", label = "Select Season",
+                            choices = c(sort(unique(CCBData$season))), selected = "spring24",
+                            options = list(`actions-box` = T), multiple = T
+                          ),
+                          pickerInput(
                             inputId = "UmpireTeamInput", label = "Select Team",
                             choices = c(sort(unique(CCBData$BatterTeam))), selected = "CEN_COL",
                             options = list(`actions-box` = T), multiple = T
@@ -408,19 +434,44 @@ ui = {navbarPage(
 
 server <- function(input, output, session) {
   
-  # SEASON DATA
-  # Creates reactive data table filtered by season input
+  # SEASON DATA for pitcher , batter ,and umpire seperately
+  # Creates reactive data table filtered by season input in pitcher tab
   Season_Input_Data <- reactive({
-    input$SeasonInput
     Season_Data <- CCBData[CCBData$season %in% input$SeasonInput, ]
+    Season_Data
+  })
+  # Creates reactive data table filtered by season input in batter tab
+  Season_Input_Data_1 <- reactive({
+    Season_Data <- CCBData[CCBData$season %in% input$BatterSeasonInput, ]
+    Season_Data
+  })
+  
+  # Creates reactive data table filtered by season input in umpire tab
+  Season_Input_Data_2 <- reactive({
+    Season_Data <- CCBData[CCBData$season %in% input$UmpireSeasonInput, ]
+    Season_Data
   })
   
   
+  
   # PITCHER DATA
+  # Updates pitcherTeam Input choices based on team input 
+  observeEvent(input$SeasonInput, {
+    pitcher_team_choices <- sort(unique(Season_Input_Data()$PitcherTeam))
+    n <- 1    
+    if("CEN_COL" %in% pitcher_team_choices)  {
+      n <- which(pitcher_team_choices == "CEN_COL")}
+    updatePickerInput(session, "PitcherTeamInput", 
+                      choices = pitcher_team_choices, selected= pitcher_team_choices[n])
+    
+  })
+  
+  
+  
   # Creates reactive data table filtered by team input
   Pitcher_Team_Input_Data <- reactive({
-    input$PitcherTeamInput
     Filtered_Data <- Season_Input_Data()[Season_Input_Data()$PitcherTeam %in% input$PitcherTeamInput, ]
+    Filtered_Data
   })
   # Updates Pitcher Input choices based on team input
   observeEvent(input$PitcherTeamInput, {
@@ -435,7 +486,7 @@ server <- function(input, output, session) {
     Filtered_Data <- Pitcher_Team_Input_Data()[Pitcher_Team_Input_Data()$Pitcher == input$PitcherInput, ]
   })
   # Updates Pitcher Game Input and Pitcher Pitch Type choices based on pitcher input
-  observeEvent(input$PitcherInput, {
+  observeEvent({input$PitcherInput ; input$SeasonInput} , {
     pitcher_games <- sort(unique(Pitcher_Input_Data()$Games))
     updatePickerInput(session, "PitcherGameInput", 
                       choices = pitcher_games, selected = pitcher_games
@@ -497,10 +548,23 @@ server <- function(input, output, session) {
   })
   
   # BATTER DATA
+  
+  # Updates BatterTeam Input choices based on team input 
+  observeEvent(input$BatterSeasonInput, {
+    Batter_team_choices <- sort(unique(Season_Input_Data_1()$BatterTeam))
+    n <- 1    
+    if("CEN_COL" %in% Batter_team_choices)  {
+      n <- which(Batter_team_choices == "CEN_COL")}
+    updatePickerInput(session, "BatterTeamInput", 
+                      choices = Batter_team_choices, selected = Batter_team_choices[n]
+    )
+  })
+  
+  
   # Creates reactive data table filtered by team input
   Batter_Team_Input_Data <- reactive({
     input$BatterTeamInput
-    Filtered_Data <- Season_Input_Data()[Season_Input_Data()$BatterTeam %in% input$BatterTeamInput, ]
+    Filtered_Data <- Season_Input_Data_1()[Season_Input_Data_1()$BatterTeam %in% input$BatterTeamInput, ]
   })
   # Updates Batter Input choices based on team input
   observeEvent(input$BatterTeamInput, {
@@ -515,7 +579,7 @@ server <- function(input, output, session) {
     Filtered_Data <- Batter_Team_Input_Data()[Batter_Team_Input_Data()$Batter == input$BatterInput, ]
   })
   # Updates Batter Game Input and Batter Pitch Type choices based on batter input
-  observeEvent(input$BatterInput, {
+  observeEvent({input$BatterInput ; input$BatterSeasonInput }, {
     batter_games <- sort(unique(Batter_Input_Data()$Games))
     updatePickerInput(session, "BatterGameInput", 
                       choices = batter_games, selected = batter_games
@@ -576,6 +640,38 @@ server <- function(input, output, session) {
       
     } else {}
   }
+  
+  #UMPIRE DATA
+  # Updates pitcherTeam Input choices based on team input 
+  observeEvent(input$UmpireSeasonInput, {
+    umpire_team_choices <- sort(unique(Season_Input_Data_2()$BatterTeam))
+    n <- 1    
+    if("CEN_COL" %in% umpire_team_choices)  {
+      n <- which(umpire_team_choices == "CEN_COL")}
+    updatePickerInput(session, "UmpireTeamInput", 
+                      choices = umpire_team_choices, selected = umpire_team_choices[n]
+    )
+  })
+  
+  # Creates reactive data table filtered by team input
+  Umpire_Team_Input_Data <- reactive({
+    input$UmpireTeamInput
+    Filtered_Data <- Season_Input_Data_2()[Season_Input_Data_2()$BatterTeam %in% input$UmpireTeamInput, ]
+    Filtered_Data
+  })
+  # Updates Pitcher Input choices based on team input
+  observeEvent({input$UmpireTeamInput ; input$UmpireSeasonInput}, {
+    Game_choices <- sort(unique(Umpire_Team_Input_Data()$Games))
+
+    updatePickerInput(session, "UmpireGameInput", 
+                      choices = Game_choices, selected = Game_choices[1]
+    )
+  })
+  
+  
+  
+  
+  
   
   # Function that sets up Kzone charts without info used as an add on graph
   Kzone_Chart_Setup_basic <- function(plotname, pitch_or_bat) {
@@ -731,8 +827,18 @@ server <- function(input, output, session) {
           round(1) %>% format(nsmall = 1),
         'Avg Velo' = mean(RelSpeed, na.rm = T) %>% 
           round(1) %>% format(nsmall = 1),
+        
         'Avg Spin' = mean(SpinRate, na.rm = T) %>% 
           round(0) %>% format(nsmall = 0),
+        'Avg HB' = mean(HorzBreak, na.rm = T) %>% 
+          round(1) %>% format(nsmall = 1),
+        'Avg IVB' = mean(InducedVertBreak, na.rm = T) %>% 
+          round(1) %>% format(nsmall = 1),
+        'Avg VAA' = mean(VertApprAngle, na.rm = T) %>% 
+          round(1) %>% format(nsmall = 1),
+        'Avg Ext' = mean(Extension, na.rm = T) %>% 
+          round(1) %>% format(nsmall = 1),
+        
         'Slug%' = (sum(SLG_VAL, na.rm = T) / sum(AB, na.rm = T)) %>% 
           round(3) %>% format(nsmall = 3),
         '90% Exit Velo' = quantile(ExitSpeed, probs = 0.9, na.rm = T) %>% 
@@ -1344,7 +1450,7 @@ server <- function(input, output, session) {
   observe({
     output$BatterExitSpeedPlot <- renderPlotly({       #Batter Exit Speed Chart
       
-      batter_Filtered_Data <- Season_Input_Data() %>% 
+      batter_Filtered_Data <- Season_Input_Data_1() %>% 
         filter(Batter == input$BatterInput,
                Count %in% input$BatterCountInput,
                TaggedPitchType %in% input$BatterPitchType)
@@ -1636,7 +1742,7 @@ server <- function(input, output, session) {
   # SEPARATE TEAM:
   output$SeparateTeamPlot <- renderPlot({     #Seperate team umpire calls 
     dataFilter <- 
-      Season_Input_Data() %>%
+      Season_Input_Data_2() %>%
       filter(Games %in% input$UmpireGameInput, 
              # TaggedPitchType %in% input$PitcherPitchType, 
              # Count %in% input$PitcherCountInput,
@@ -1662,7 +1768,7 @@ server <- function(input, output, session) {
   # ALL TEAMS: 
   output$AllTeamsPlot <- renderPlot({       #All teams umpire call data 
     dataFilter <- 
-      Season_Input_Data() %>%
+      Season_Input_Data_2() %>%
       filter(Games %in% input$PitcherGameInput,TaggedPitchType %in% input$PitcherPitchType, Count %in% input$PitcherCountInput,
              PitchCall == "BallCalled"|PitchCall == "StrikeCalled", PitcherTeam %in% input$PitcherTeamInput)
     
@@ -1725,7 +1831,7 @@ server <- function(input, output, session) {
   
   # Define dataFilter outside the function as a reactive expression
   dataFilter <- reactive({
-    Season_Input_Data() %>%
+    Season_Input_Data_2() %>%
       filter(Games %in% input$PitcherGameInput,
              TaggedPitchType %in% input$PitcherPitchType,
              Count %in% input$PitcherCountInput,
@@ -1819,7 +1925,7 @@ server <- function(input, output, session) {
   
   # HEATMAP:
   output$UmpireHeatmapPlot <- renderPlot({    #Heatmap for umpire calls
-    dataFilter <- Season_Input_Data() %>% 
+    dataFilter <- Season_Input_Data_2() %>% 
       filter(Games %in% input$PitcherGameInput, 
              PitchCall == "BallCalled"| PitchCall == "StrikeCalled",
              Count %in% input$PitcherCountInput,
